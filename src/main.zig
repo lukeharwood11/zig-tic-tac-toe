@@ -1,7 +1,26 @@
 const std = @import("std");
 
+const Board = [9]i8;
 pub const InputError = error{InvalidInput};
-pub const State = enum { Playing, GameOver, Quit };
+pub const BoardState = enum {
+    player1_won,
+    player2_won,
+    draw,
+    no_winner,
+
+    fn isGameOver(self: BoardState) bool {
+        return self != .no_winner;
+    }
+
+    fn toString(self: BoardState) []const u8 {
+        return switch (self) {
+            .player1_won => "Player 1 won!",
+            .player2_won => "Player 2 won!",
+            .draw => "No Winner!",
+            .no_winner => "Game still in progress...",
+        };
+    }
+};
 
 /// future me should turn this into a bit-mask
 const WINNING_POSITIONS: [8][3]usize = .{
@@ -15,25 +34,65 @@ const WINNING_POSITIONS: [8][3]usize = .{
     .{ 2, 4, 6 },
 };
 
-/// brute force check for winner
-pub fn didPlayerWin(player: i8, board: *[9]i8) bool {
-    return calculateScore(player, board) == 3;
+/// Check the current state of the board.
+/// Return whether there's a winner, a draw, or the game is still going
+pub fn getBoardState(board: *Board) BoardState {
+    for (WINNING_POSITIONS) |position| {
+        var player1 = true;
+        var player2 = true;
+        for (position) |i| {
+            if (board[i] != 1) {
+                player1 = false;
+            }
+            if (board[i] != -1) {
+                player2 = false;
+            }
+        }
+        if (player1) {
+            return BoardState.player1_won;
+        } else if (player2) {
+            return BoardState.player2_won;
+        }
+    }
+    for (board) |val| {
+        if (val == 0) {
+            return BoardState.no_winner;
+        }
+    } else {
+        return BoardState.draw;
+    }
 }
 
 const MiniMaxResult = struct { value: i32, choice: usize = undefined };
 
-/// ? What is wrong with this ?
 pub fn minimax(board: [9]i8, maximize: bool) MiniMaxResult {
     var board_copy = board;
-    if (didPlayerWin(1, &board_copy) or didPlayerWin(-1, &board_copy)) {
-        return MiniMaxResult{ .value = 10 };
+    // get the score for the *opposite* player
+    const state = getBoardState(&board_copy);
+    switch (state) {
+        .draw => {
+            return .{ .value = 0 };
+        },
+        .player1_won => {
+            // std.debug.print("\nPlayer 1 won - Player: {d}\n", .{player});
+            // printBoard(&board_copy);
+            return .{ .value = -1 };
+        },
+        .player2_won => {
+            // std.debug.print("\nPlayer 2 won - Player: {d}\n", .{player});
+            // printBoard(&board_copy);
+            return .{ .value = 1 };
+        },
+        else => {},
     }
     if (maximize) {
+        // this is the AI player
         var max: ?MiniMaxResult = null;
         for (0..board.len) |i| {
             if (board_copy[i] == 0) {
-                board_copy[i] = -1;
-                var res = minimax(board_copy, false);
+                var b = board_copy;
+                b[i] = -1;
+                var res = minimax(b, false);
                 res.choice = i;
                 if (max) |current| {
                     max = if (res.value < current.value) current else res;
@@ -48,10 +107,9 @@ pub fn minimax(board: [9]i8, maximize: bool) MiniMaxResult {
         var min: ?MiniMaxResult = null;
         for (0..board.len) |i| {
             if (board_copy[i] == 0) {
-                board_copy[i] = 1;
-                var res = minimax(board_copy, true);
-                // printBoard(&board_copy);
-                // std.debug.print("\nScore: {d}", .{res.value});
+                var b = board_copy;
+                b[i] = 1;
+                var res = minimax(b, true);
                 res.choice = i;
                 if (min) |current| {
                     min = if (res.value > current.value) current else res;
@@ -63,23 +121,6 @@ pub fn minimax(board: [9]i8, maximize: bool) MiniMaxResult {
         // min will be null if the board full (tie game)
         return min orelse .{ .value = 0 };
     }
-}
-
-pub fn calculateScore(player: i8, board: *[9]i8) i8 {
-    var score: i8 = 0;
-    for (WINNING_POSITIONS) |position| {
-        var cnt: i8 = 0;
-        for (position) |i| {
-            if (board[i] != player) {
-                break;
-            }
-            cnt += 1;
-        }
-        if (cnt > score) {
-            score = cnt;
-        }
-    }
-    return score;
 }
 
 pub fn getValidMove(board: *[9]i8) !usize {
@@ -132,8 +173,8 @@ pub fn printBoard(board: *[9]i8) void {
 pub fn main() !void {
     var board = [_]i8{0} ** 9;
     var current_player: i8 = 1;
-    const state = State.Playing;
-    while (state == State.Playing) {
+    var state = BoardState.no_winner;
+    while (state == BoardState.no_winner) {
         std.debug.print("Current Player: {d}", .{if (current_player == 1) @as(i8, 1) else @as(i8, 2)});
         printBoard(&board);
         if (current_player == 1) {
@@ -146,14 +187,12 @@ pub fn main() !void {
             }
         } else {
             const result = minimax(board, true);
-            std.debug.print("Result: {d}, value: {d}", .{ result.choice, result.value });
             board[result.choice] = current_player;
         }
-        // check for winner
-        const win = didPlayerWin(current_player, &board);
-        if (win) {
-            std.debug.print("\nPlayer {d} won!", .{if (current_player == 1) @as(i8, 1) else @as(i8, 2)});
+        state = getBoardState(&board);
+        if (state.isGameOver()) {
             printBoard(&board);
+            std.debug.print("\n{s}", .{state.toString()});
             break;
         }
         current_player *= -1;
@@ -162,11 +201,11 @@ pub fn main() !void {
 
 test "winner test" {
     var board = [_]i8{0} ** 9;
-    var win = didPlayerWin(1, &board);
-    try std.testing.expect(!win);
+    var state = getBoardState(&board);
+    try std.testing.expect(state == .no_winner);
     board[0] = 1;
     board[1] = 1;
     board[2] = 1;
-    win = didPlayerWin(1, &board);
-    try std.testing.expect(win);
+    state = getBoardState(&board);
+    try std.testing.expect(state == .player1_won);
 }
